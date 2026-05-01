@@ -13,6 +13,17 @@ st.set_page_config(
 nodes = []
 edges = []
 
+if "search_result" not in st.session_state:
+    st.session_state.search_result = None
+if "search_pcl" not in st.session_state:
+    st.session_state.search_pcl = None
+if "graph_companies" not in st.session_state:
+    st.session_state.graph_companies = None
+if "search_first_name" not in st.session_state:
+    st.session_state.search_first_name = ""
+if "search_last_name" not in st.session_state:
+    st.session_state.search_last_name = ""
+
 st.title(":mag: France Checks")
 
 st.text("This app checks the existence of a company in France based on the provided first and last name.")
@@ -92,8 +103,26 @@ if st.button("Check"):
             print(f"Failed to get company info for {row['Siren']}: {e}")
 
     result = df.join(companies.drop("CompanyName"), on="Siren", how="left")
+    name = f"{first_name} {last_name}"
+    normalized_name = to_upper_no_accents(name)
+    graph_companies = result.filter(
+        pl.col("Dirigeants").str.contains(f"{normalized_name}", literal=True)
+    )
 
-    if df.is_empty():
+    st.session_state.search_result = result
+    st.session_state.search_pcl = pcl
+    st.session_state.graph_companies = graph_companies
+    st.session_state.search_first_name = first_name
+    st.session_state.search_last_name = last_name
+
+if st.session_state.search_result is not None:
+    result = st.session_state.search_result
+    pcl = st.session_state.search_pcl
+    graph_companies = st.session_state.graph_companies
+    selected_first_name = st.session_state.search_first_name
+    selected_last_name = st.session_state.search_last_name
+
+    if result.is_empty():
         st.warning("No company found.")
     else:
         st.success("Companies found:")
@@ -118,46 +147,57 @@ if st.button("Check"):
         else:
             st.info("No Procedures Collectives records found for the company.")
 
-    name = f"{first_name} {last_name}"
-    normalized_name = to_upper_no_accents(name)
-    graph_companies = result.filter(
-        pl.col("Dirigeants").str.contains(f"{normalized_name}", literal=True)
+    st.markdown("###### Graph Representation (only showing companies with matching director):")
+    nodes = []
+    edges = []
+
+    nodes.append(
+        Node(
+            id="Person",
+            label=f"{selected_first_name} {selected_last_name}",
+            size=25,
+            font={"color": "black"},
+            image="https://raw.githubusercontent.com/material-icons/material-icons-png/refs/heads/master/png/white/person/baseline-2x.png",
+            shape="circularImage",
+        )
     )
 
-    st.markdown("###### Graph Representation (only showing companies with matching director):")
-    nodes.append( Node(id="Person", 
-                   label=f"{first_name} {last_name}", 
-                   size=25,
-                   font={'color': 'white'},
-                   image="https://raw.githubusercontent.com/material-icons/material-icons-png/refs/heads/master/png/white/person/baseline-2x.png",
-                   shape="circularImage",)
-            ) 
-    for row in graph_companies.iter_rows(named=True):
-        nodes.append( Node(id=f"{row['Siren']}", 
-                label=row['CompanyName'],
-                color="green",
-                font={'color': 'white'},
+    for row in graph_companies.unique(subset="Siren", keep="first", maintain_order=True).iter_rows(named=True):
+        is_pcl = pcl.select(pl.col("Siren").is_in([row["Siren"]]).any()).item()
+        color = "red" if is_pcl else "green"
+        nodes.append(
+            Node(
+                id=f"{row['Siren']}",
+                label=row["CompanyName"],
+                color=color,
+                font={"color": "black"},
                 size=25,
                 link=f"https://www.pappers.fr/entreprise/{row['Siren']}",
                 image="https://raw.githubusercontent.com/material-icons/material-icons-png/refs/heads/master/png/white/business/baseline-2x.png",
-                shape="circularImage",)
-                )
-        edges.append( Edge(source="Person",  
-                        target=f"{row['Siren']}", 
-                        ) 
-                    )
+                shape="circularImage",
+            )
+        )
+        edges.append(
+            Edge(
+                source="Person",
+                target=f"{row['Siren']}",
+            )
+        )
 
-    config = Config(width=700,
-                height=500,
-                directed=True, 
-                physics=True, 
-                hierarchical=False,
-                highlightColor="#F0F0F0",
-                nodeHighlightBehavior=True,
-                )
+    config = Config(
+        width=700,
+        height=500,
+        directed=True,
+        physics=False,
+        hierarchical=False,
+        highlightColor="#F0F0F0",
+        nodeHighlightBehavior=True,
+    )
 
-    return_value = agraph(nodes=nodes, 
-                        edges=edges, 
-                        config=config)
+    return_value = agraph(
+        nodes=nodes,
+        edges=edges,
+        config=config,
+    )
     
 
